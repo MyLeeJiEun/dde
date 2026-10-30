@@ -1,131 +1,75 @@
-## Deepin Desktop Environment {#mainpage}
+# dde
 
-Deepin Desktop Environment (DDE) depends on the various Deepin Desktop Envrionment packages available in Deepin. 
-Use this if you want Deepin Desktop Envrionment..
+DDE 组版本基线。记录哪些仓库是一组，以及每组当前的版本号。
 
-## Dependencies
+原先这里是 UOS 20 的 `dde` 元包，2023 年后没再更新，已经停用。旧打包文件留在 git 历史里。
 
-### Build dependencies
+## 规则
 
-* deepin-desktop-base | deepin-desktop-server | deepin-desktop-device
-* deepin-default-settings
-* dde-desktop
-* dde-dock
-* dde-launcher
-* dde-control-center(>> 2.90.5)
-* startdde
-* dde-session-ui
-* deepin-artwork
-* deepin-manual
-* dde-file-manager
-* dde-qt5integration
-* eject
-* plymouth-theme-deepin-logo
-* deepin-wallpapers
-* fonts-noto
-* dde-kwin
-* dde-clipboard
-* deepin-screensaver
-* deepin-license-activator
-* deepin-app-store
-* deepin-terminal
-* deepin-defender
-* deepin-system-monitor
-* deepin-devicemanager
-* dde-printer
-* dde-calendar
-* uos-service-support
-* org.deepin.chineseime [!sw_64]
-* dde-introduction
-* deepin-user-experience-daemon
-* fcitx-config-gtk
-* udcp-installer [amd64 arm64]
-* grub-efi-arm64-signed [arm64]
-* grub-efi-loongarch64-signed [loongarch64]
-* uos-audit-dac
-* permission-manager
-* sec-cfg
+- 组内所有仓库的 `debian/changelog` 版本必须等于 `groups.yaml` 里该组的 `version`。
+- 组里任一仓库有更新，整组一起升版本、一起打包。
+- 依赖关系（`debian/control` 里的 `>=` / `>>`）不动，版本变大后下界仍然成立。
 
-### Recommends dependencies:
+## 文件
 
-* dde-qt5wayland-plugin
-* uos-remote-assistance
-* org.deepin.downloader
-* deepin-aiassistant
-* deepin-editor
-* pppoe
-* gvfs-fuse
-* smbclient
-* python-smbc
-* cups-filters
-* printer-driver-all
-* foomatic-db-compressed-ppds
-* foomatic-db-engine
-* openprinting-ppds
-* libsane-hpaio
-* linux-firmware
-* wireless-tools
-* ttf-deepin-opensymbol
-* printer-driver-hpcups
-* printer-driver-hpijs
-* libmtp-runtime
-* samsung-print
-* open-vm-tools-desktop
-* open-vm-tools
-* usbmuxd
-* ipheth-utils
-* libimobiledevice-dev
-* libimobiledevice-utils
-* dnsutils
-* libfile-mimeinfo-perl
-* deepin-shortcut-viewer
-* crda
-* network-manager-integration-plugins
-* dde-manual-content
-* libtxc-dxtn-s2tc0 | libtxc-dxtn-s2tc
-* libflashplugin-pepper
-* x-display-manager
-* deepin-music
-* deepin-image-viewer
-* deepin-calculator
-* deepin-voice-note
-* deepin-screen-recorder
-* deepin-font-manager
-* deepin-draw
-* deepin-album
-* deepin-movie
-* deepin-deb-installer
-* deepin-compressor
-* deepin-mail
-* deepin-diskmanager
-* deepin-camera
-* fcitx-sunpinyin
-* org.deepin.scanner
-* fcitx-ui-classic
-* dde-dconfig-daemon
+- `groups.yaml`：分组、成员、当前版本。唯一事实来源，别处不另存一份。
+- `.github/workflows/release-group.yml`：按组派发 changelog 更新。
+- `.github/workflows/sync-baseline.yml`：让基线跟上实际版本。
 
-### Conflicts:
- dde-control-center(<< 2.90.5),
- deepin-desktop-environment-desktop,
- deepin-desktop-environment-dock,
- deepin-desktop-environment-launcher,
- dconfig-daemon
+## 发版
 
-## Getting help
+组内 changelog 只从这里发起，不要挨个进组件仓库改版本。
 
-Any usage issues can ask for help via
+`Actions → Release group → Run workflow`，四个参数：
 
-* [Deepin Community Space](https://matrix.to/#/#deepin-space:matrix.org)
-* [Forum](https://bbs.deepin.org)
-* [WiKi](https://wiki.deepin.org/)
+- `group`：要发的组，见 `groups.yaml`。
+- `version`：目标版本，必须大于组内当前版本。
+- `dry_run`：默认 `true`，只打印成员列表。
+- `create_pr`：默认 `true`，在成员仓库建 PR。
 
-## Getting involved
+它做的是：读 `groups.yaml` 拿到整组成员，逐个派发成员仓库的 changelog workflow。
+本仓库不生成 changelog。
 
-We encourage you to report issues and contribute changes
+成员仓库有两种，派发时按 workflow 名字自动识别：
 
-* [Contribution guide for developers](https://github.com/linuxdeepin/developer-center/wiki/Contribution-Guidelines-for-Developers-en). (English)
-* [开发者代码贡献指南](https://github.com/linuxdeepin/developer-center/wiki/Contribution-Guidelines-for-Developers) (中文)
+- `Call update changelog`（`linuxdeepin/.github` 的 PR #790）：G2 / G3 / G5 在用。
+- `Auto Release`：G1（DTK）在用，走 `git-cliff` + `dch --newversion`。
 
-## License
+两种都没有的仓库会被跳过并打 warning。另外要配 secret `RELEASE_TOKEN`，
+对 `linuxdeepin` 下的成员仓库有 `actions: write`。
 
-deepin-tool-kit is licensed under [GPL-2+](LICENSE).
+## 基线跟随
+
+PR 合并后不用手工改 `groups.yaml`。`Sync baseline` 每天跑一次，也可以手动触发：
+
+- 全组版本一致且高于基线：开一个 `baseline/<组>-<版本>` 的 PR 更新 `groups.yaml`。
+- 组内版本不一致：只打 warning，基线不动。
+- 一致但等于基线：不动。
+
+基线只前进，不回退。用 PR 而不是直接提交，是为了在分支保护下也能工作，
+每次变更都有记录；代价是合并要人点一下。
+
+## 组件侧校验
+
+成员和版本以 `groups.yaml` 为准，这里不重复列举。
+
+打算做成 `linuxdeepin/.github` 的复用 workflow（`verify-group-version.yml`），
+通过 `workflow-templates/call-*` 引入，不用每个组件手写脚本。现在还没做，
+在此之前组内版本一致只能靠约定和 `sync-baseline` 的事后检查，PR 阶段拦不住。
+
+## 分组
+
+| 组 | 说明 | 成员 |
+|---|---|---|
+| G1 | DTK 基础库 | dtkcommon、dtk6log、dtklog、dtkcore、dtkgui、dtkwidget、dtkdeclarative、qt5platform-plugins、qt5integration |
+| G2 | Go 服务基座 | go-lib、go-dbus-factory、dde-api、deepin-pw-check、dde-app-services |
+| G3 | 会话核心与桌面应用 | dde-daemon、dde-services、dde-session、dde-session-shell-v25、dde-polkit-agent、dde-session-ui、dde-shell、dde-tray-loader、dde-application-manager、deepin-service-manager、dde-control-center、dde-launchpad、dde-clipboard、dde-network-core、deepin-update-ui、dcc-insider-plugin、xdg-desktop-portal-dde |
+| G5 | 外观与主题 | dde-appearance、deepin-desktop-theme、deepin-face、deepin-screensaver |
+| G5-icons | 图标主题 | deepin-icon-theme |
+
+不参与统一：dde-dialog、dde-manual-content、gnome-keyring。
+
+划分按耦合强度：循环依赖必须同版本；带版本约束的单向依赖，一方升级另一方要跟发；
+只有构建期依赖的算源码级 ABI 耦合；没有内部依赖的不参与。各组的具体理由见组件仓库里的依赖图文档。
+
+成员和版本以 `groups.yaml` 为准，这里只是概览。

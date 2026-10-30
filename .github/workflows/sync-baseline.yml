@@ -1,0 +1,124 @@
+name: Sync baseline
+
+# 让 groups.yaml 跟随事实：读各成员默认分支的真实 changelog 版本。
+# - 全组版本一致且高于基线 -> 开 PR 更新 groups.yaml
+# - 组内版本不一致 -> 只报警告，不动基线（说明有一次发版还没合完）
+# 用 PR 而不是直接 push：分支保护下也能工作，每次基线变更都有记录。
+
+on:
+  schedule:
+    - cron: "17 2 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: sync-baseline
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install deps
+        run: pip install --quiet pyyaml
+
+      - name: 计算并回写
+        id: calc
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+        run: |
+          python3 - <<'PY'
+          import os, re, subprocess, yaml
+
+          cfg = yaml.safe_load(open("groups.yaml"))
+          ov = cfg.get("repo_overrides", {})
+
+          def head_version(repo):
+              r = subprocess.run(
+                  ["gh", "api",
+                   f"repos/linuxdeepin/{repo}/contents/debian/changelog?ref=master",
+                   "-H", "Accept: application/vnd.github.raw"],
+                  capture_output=True, text=True)
+              if r.returncode:
+                  return None
+              first = (r.stdout.splitlines() or [""])[0]
+              m = re.match(r"^\S+ \(([^)]*)\)", first)
+              return m.group(1) if m else None
+
+          def greater(a, b):
+              return subprocess.run(
+                  ["dpkg", "--compare-versions", a, "gt", b]).returncode == 0
+
+          changes, drift = {}, []
+          for group, info in cfg["groups"].items():
+              vers = {m: head_version(ov.get(m, m)) for m in info["members"]}
+              missing = [m for m, v in vers.items() if not v]
+              if missing:
+                  drift.append(f"{group}: 读取失败 {', '.join(missing)}")
+                  continue
+              uniq = set(vers.values())
+              if len(uniq) == 1:
+                  only = uniq.pop()
+                  if greater(only, info["version"]):
+                      changes[group] = only
+                      print(f"{group}: {info['version']} -> {only}")
+                  else:
+                      print(f"{group}: {info['version']}（无变化）")
+              else:
+                  drift.append(f"{group}: 组内版本不一致 -> " +
+                               ", ".join(f"{m}={v}" for m, v in vers.items()))
+
+          if changes:
+              lines = open("groups.yaml", encoding="utf-8").read().splitlines()
+              for group, ver in changes.items():
+                  inside = False
+                  for i, ln in enumerate(lines):
+                      if re.match(rf"^  {re.escape(group)}:\s*$", ln):
+                          inside = True
+                          continue
+                      if inside and re.match(r"^  [A-Za-z0-9_]+:\s*$", ln):
+                          break
+                      if inside and re.match(r"^    version:", ln):
+                          lines[i] = f'    version: "{ver}"'
+                          break
+              with open("groups.yaml", "w", encoding="utf-8") as f:
+                  f.write("\n".join(lines) + "\n")
+
+          out = os.environ["GITHUB_OUTPUT"]
+          with open(out, "a", encoding="utf-8") as f:
+              if changes:
+                  groups = ",".join(changes)
+                  slug = (f"{next(iter(changes))}-{next(iter(changes.values()))}"
+                          if len(changes) == 1 else f"{len(changes)}-groups")
+                  f.write("changed=true\n")
+                  f.write(f"groups={groups}\n")
+                  f.write(f"slug={slug}\n")
+                  f.write("body<<BODY\n")
+                  for g, v in changes.items():
+                      f.write(f"- {g}: {v}\n")
+                  f.write("BODY\n")
+              else:
+                  f.write("changed=false\n")
+
+          for line in drift:
+              print(f"::warning::{line}")
+          PY
+
+      - name: 创建基线 PR
+        if: steps.calc.outputs.changed == 'true'
+        uses: peter-evans/create-pull-request@v7
+        with:
+          token: ${{ secrets.RELEASE_TOKEN || github.token }}
+          branch: baseline/${{ steps.calc.outputs.slug }}
+          delete-branch: true
+          commit-message: "chore(baseline): sync ${{ steps.calc.outputs.groups }}"
+          title: "chore(baseline): sync ${{ steps.calc.outputs.groups }}"
+          body: |
+            以下组的成员已达到新版本，基线自动跟随：
+
+            ${{ steps.calc.outputs.body }}
