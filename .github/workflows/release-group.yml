@@ -1,0 +1,104 @@
+name: Release group
+
+# 唯一升 changelog 入口：按 groups.yaml 给整组成员派发 call-update-changelog.yml。
+# 成员仓库里的 changelog 由 linuxdeepin/.github 的复用 workflow 生成，本仓库不实现。
+# 需要 secret RELEASE_TOKEN：对 linuxdeepin 下成员仓库有 actions:write 权限。
+
+on:
+  workflow_dispatch:
+    inputs:
+      group:
+        description: 组
+        required: true
+        type: choice
+        options: [G1, G2, G3, G5, G5-icons]
+      version:
+        description: 目标版本（必须大于组内当前版本）
+        required: true
+        type: string
+      dry_run:
+        description: 只打印计划，不触发
+        required: false
+        type: boolean
+        default: true
+      create_pr:
+        description: 在成员仓库创建 PR（false 则只上传 changelog artifact）
+        required: false
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-group
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      repos: ${{ steps.list.outputs.repos }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install deps
+        run: pip install --quiet pyyaml
+
+      - name: 校验并列出成员
+        id: list
+        run: |
+          python3 - "${{ inputs.group }}" "${{ inputs.version }}" <<'PY' >> "$GITHUB_OUTPUT"
+          import json, subprocess, sys, yaml
+
+          group, version = sys.argv[1], sys.argv[2]
+          cfg = yaml.safe_load(open("groups.yaml"))
+          if group not in cfg["groups"]:
+              sys.exit(f"未知组: {group}")
+
+          cur = cfg["groups"][group]["version"]
+          if subprocess.run(["dpkg", "--compare-versions", version, "gt", cur]).returncode:
+              sys.exit(f"{version} 必须大于 {group} 当前版本 {cur}")
+
+          ov = cfg.get("repo_overrides", {})
+          repos = [ov.get(m, m) for m in cfg["groups"][group]["members"]]
+          print(f"repos={json.dumps(repos)}")
+          PY
+
+      - name: 计划
+        run: |
+          echo "组: ${{ inputs.group }}"
+          echo "版本: ${{ inputs.version }}"
+          echo "${{ steps.list.outputs.repos }}" | python3 -c 'import json,sys; [print("  -", r) for r in json.load(sys.stdin)]'
+
+  dispatch:
+    needs: plan
+    if: ${{ !inputs.dry_run }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        repo: ${{ fromJSON(needs.plan.outputs.repos) }}
+    steps:
+      - name: Dispatch ${{ matrix.repo }}
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+        run: |
+          set -euo pipefail
+          repo="linuxdeepin/${{ matrix.repo }}"
+
+          if ! gh workflow list -R "$repo" --json name --jq '.[].name' \
+               | grep -qx 'Call update changelog'; then
+            echo "::warning::${{ matrix.repo }} 未启用 Call update changelog，跳过"
+            exit 0
+          fi
+
+          gh workflow run call-update-changelog.yml -R "$repo" \
+            -f version="${{ inputs.version }}" \
+            -f name="${{ github.actor }}" \
+            -f email="${{ github.actor_id }}+${{ github.actor }}@users.noreply.github.com" \
+            -f base_branch=master \
+            -f distribution=unstable \
+            -f create_pr=${{ inputs.create_pr }}
+
+          echo "已触发 ${{ matrix.repo }} -> ${{ inputs.version }}"

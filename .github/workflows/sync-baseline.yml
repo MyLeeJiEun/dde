@@ -1,0 +1,103 @@
+name: Sync baseline
+
+# 让 groups.yaml 跟随事实：读各成员默认分支的真实 changelog 版本。
+# - 全组版本一致且高于基线 -> 自动前进并提交
+# - 组内版本不一致 -> 只报警告，不动基线（说明有一次发版还没合完）
+# 这样发版 PR 合并后不需要手工改 groups.yaml。
+
+on:
+  schedule:
+    - cron: "17 2 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: sync-baseline
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install deps
+        run: pip install --quiet pyyaml
+
+      - name: 计算并回写
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+        run: |
+          python3 - <<'PY'
+          import json, re, subprocess, yaml
+
+          cfg = yaml.safe_load(open("groups.yaml"))
+          ov = cfg.get("repo_overrides", {})
+
+          def head_version(repo):
+              r = subprocess.run(
+                  ["gh", "api",
+                   f"repos/linuxdeepin/{repo}/contents/debian/changelog?ref=master",
+                   "-H", "Accept: application/vnd.github.raw"],
+                  capture_output=True, text=True)
+              if r.returncode:
+                  return None
+              first = (r.stdout.splitlines() or [""])[0]
+              m = re.match(r"^\S+ \(([^)]*)\)", first)
+              return m.group(1) if m else None
+
+          def greater(a, b):
+              return subprocess.run(
+                  ["dpkg", "--compare-versions", a, "gt", b]).returncode == 0
+
+          changes, drift = {}, []
+          for group, info in cfg["groups"].items():
+              vers = {m: head_version(ov.get(m, m)) for m in info["members"]}
+              missing = [m for m, v in vers.items() if not v]
+              if missing:
+                  drift.append(f"{group}: 读取失败 {', '.join(missing)}")
+                  continue
+              uniq = set(vers.values())
+              if len(uniq) == 1:
+                  only = uniq.pop()
+                  if greater(only, info["version"]):
+                      changes[group] = only
+                      print(f"{group}: {info['version']} -> {only}")
+                  else:
+                      print(f"{group}: {info['version']}（无变化）")
+              else:
+                  drift.append(f"{group}: 组内版本不一致 -> " +
+                               ", ".join(f"{m}={v}" for m, v in vers.items()))
+
+          if changes:
+              lines = open("groups.yaml", encoding="utf-8").read().splitlines()
+              for group, ver in changes.items():
+                  inside = False
+                  for i, ln in enumerate(lines):
+                      if re.match(rf"^  {re.escape(group)}:\s*$", ln):
+                          inside = True
+                          continue
+                      if inside and re.match(r"^  [A-Za-z0-9_]+:\s*$", ln):
+                          break
+                      if inside and re.match(r"^    version:", ln):
+                          lines[i] = f'    version: "{ver}"'
+                          break
+              with open("groups.yaml", "w", encoding="utf-8") as f:
+                  f.write("\n".join(lines) + "\n")
+
+          for line in drift:
+              print(f"::warning::{line}")
+          PY
+
+      - name: 提交
+        run: |
+          if git diff --quiet groups.yaml; then
+            echo "基线无变化"
+            exit 0
+          fi
+          git config user.name "dde-release bot"
+          git config user.email "dde-release@users.noreply.github.com"
+          git commit -am "baseline: sync to actual component versions"
+          git push
