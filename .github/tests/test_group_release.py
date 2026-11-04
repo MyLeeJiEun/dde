@@ -558,11 +558,23 @@ class GroupReleaseTests(unittest.TestCase):
         self.assertTrue(pr['body'].endswith(suffix))
         for repo in ('linuxdeepin/go-lib', 'linuxdeepin/dde-api'):
             self.assertIn(f'[#1](https://github.com/{repo}/pull/1)', pr['body'])
+        self.assertIn('[#1](https://github.com/linuxdeepin/go-lib/pull/1)（已合并）', pr['body'])
+        self.assertIn('[#1](https://github.com/linuxdeepin/dde-api/pull/1)（待合并）', pr['body'])
         self.assertTrue(pr['draft'])
         self.assertEqual(self.gh.cfg['groups']['G2']['version'], '6.0.49')
         self.event(pr)
         edits = [data for _, data, method in self.gh.writes if method == 'PATCH' and 'body' in data]
         self.assertEqual(edits, [{'body': pr['body']}])
+        self.gh.member_pr('linuxdeepin/dde-api', merged=True)
+        self.gh.ns['sync'](self.gh.repo, 'master', self.gh.cfg)
+        self.assertIn('[#1](https://github.com/linuxdeepin/dde-api/pull/1)（已合并）', pr['body'])
+        self.assertNotIn('待合并', pr['body'])
+        self.assertTrue(pr['body'].startswith(prefix))
+        self.assertTrue(pr['body'].endswith(suffix))
+        self.assertFalse(pr['draft'])
+        self.assertEqual(self.gh.statuses[pr['head']['sha']][0]['state'], 'success')
+        edits = [data for _, data, method in self.gh.writes if method == 'PATCH' and 'body' in data]
+        self.assertEqual(len(edits), 2)
 
     def test_legacy_baseline_description_gets_links_without_losing_notes(self):
         self.gh.start()
@@ -581,17 +593,20 @@ class GroupReleaseTests(unittest.TestCase):
         self.gh.start()
         repo = 'linuxdeepin/go-lib'
         valid = self.gh.member_pr(repo)
-        invalid = [copy.deepcopy(valid) for _ in range(4)]
+        invalid = [copy.deepcopy(valid) for _ in range(5)]
         invalid[0]['created_at'] = '2000-01-01T00:00:00Z'
         invalid[1]['head']['repo']['full_name'] = 'someone/go-lib'
         invalid[2]['head']['repo'] = None
         invalid[3]['head']['ref'] = 'automation/update-changelog/6.0.51'
+        invalid[4]['base']['ref'] = 'another-base'
         for number, pr in enumerate(invalid, 2):
             pr.update(number=number, html_url=f'https://github.com/{repo}/pull/{number}')
         self.gh.member_prs[repo] = [*invalid, valid]
         calls, original_api = [], self.gh.api
         def recorded_api(url, *args, **kwargs):
             calls.append(url)
+            if url.startswith(f'repos/{repo}/pulls?') and 'head' in parse_qs(urlsplit(url).query):
+                return []
             return original_api(url, *args, **kwargs)
         self.gh.ns['api'] = recorded_api
         self.gh.ns['sync'](self.gh.repo, 'master', self.gh.cfg)
@@ -609,6 +624,7 @@ class GroupReleaseTests(unittest.TestCase):
             self.gh.ns['sync'](self.gh.repo, 'master', self.gh.cfg)
         pr = self.gh.prs[0]
         self.assertIn(member['html_url'], pr['body'])
+        self.assertIn(f"[#1]({member['html_url']})（已关闭，未合并）", pr['body'])
         self.assertTrue(pr['draft'])
         self.assertEqual(self.gh.statuses[pr['head']['sha']][0]['state'], 'failure')
 

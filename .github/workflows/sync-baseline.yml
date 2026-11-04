@@ -243,10 +243,10 @@ jobs:
 
           def member_prs(release, member):
               repo = member["repo"]
-              query = urlencode({"state": "all", "head": f"{repo.split('/')[0]}:{member_branch(release['group'], release['version'])}",
-                                 "base": member["base"], "per_page": 100})
+              branch = member_branch(release["group"], release["version"])
+              query = urlencode({"state": "all", "base": member["base"], "per_page": 100})
               prs = api(f"repos/{repo}/pulls?{query}", paginate=True)
-              return [p for p in prs if p["created_at"] >= release["started_at"]
+              return [p for p in prs if p["head"]["ref"] == branch and p["created_at"] >= release["started_at"]
                       and p["head"]["repo"] and p["head"]["repo"]["full_name"] == repo]
 
           def member_state(release, member, live_required=True, prs=None):
@@ -317,8 +317,11 @@ jobs:
           def member_links(release, prs):
               lines = [MEMBER_LINKS_START, "### 成员发布 PR", ""]
               for member in release["members"]:
-                  links = "、".join(f"[#{p['number']}]({p['html_url']})" for p in prs.get(member["repo"], []))
-                  lines.append(f"- {member['repo']}: {links or '尚无发布 PR'}")
+                  links = []
+                  for p in prs.get(member["repo"], []):
+                      state = "已合并" if p["merged_at"] else "待合并" if p["state"] == "open" else "已关闭，未合并"
+                      links.append(f"[#{p['number']}]({p['html_url']})（{state}）")
+                  lines.append(f"- {member['repo']}: {'、'.join(links) or '尚无发布 PR'}")
               return "\n".join([*lines, MEMBER_LINKS_END])
 
           def update_member_links(repo, pr, release, prs):
