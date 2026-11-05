@@ -506,6 +506,25 @@ class GroupReleaseTests(unittest.TestCase):
         self.assertEqual(self.gh.ns['member_branch']('G2', '1:6.0.50~rc1'), 'automation/update-changelog/1-6.0.50-rc1')
         self.assertEqual(self.gh.ns['member_branch']('G2', '6.0.50~~rc1'), 'automation/update-changelog/6.0.50-rc1')
 
+    def test_configured_qt_names_recognize_pending_and_merged_prs(self):
+        canonical = {'qt5platform-plugins': 'linuxdeepin/dde-qtplatform-plugins',
+                     'qt5integration': 'linuxdeepin/dde-qtintegration'}
+        cfg = yaml.safe_load((ROOT / 'groups.yaml').read_text())
+        self.gh.cfg['repo_overrides'] = cfg.get('repo_overrides', {})
+        self.gh.cfg['groups']['G1']['members'] = list(canonical)
+        self.gh.configs['base'] = copy.deepcopy(self.gh.cfg)
+        for member, repo in canonical.items():
+            self.gh.live[f'linuxdeepin/{member}'] = '6.7.52'
+            self.gh.live[repo] = '6.7.52'
+        members = self.gh.start('G1', '6.7.53')
+        for merged in (False, True):
+            for member, repo in zip(members, canonical.values()):
+                pr = self.gh.member_pr(member['repo'], merged=merged, group='G1')
+                pr['head']['repo']['full_name'] = repo
+            self.assertEqual(self.gh.start('G1', '6.7.53'), [])
+        self.gh.ns['sync'](self.gh.repo, 'master', self.gh.cfg)
+        self.assertFalse(self.gh.prs[0]['draft'])
+
     def test_api_auth_error_is_not_a_missing_ref(self):
         ns = {'__name__': 'api_test'}
         exec(compile(CODE, 'sync-baseline.py', 'exec'), ns)

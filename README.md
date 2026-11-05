@@ -121,8 +121,21 @@ python3 -I .github/tests/test_group_release.py -v
 
 ## 组件侧校验
 
-成员仓库尚未接入统一的基线版本校验，成员 PR 目前不会自动比对本仓库的版本。
-计划在 `linuxdeepin/.github` 提供复用工作流 `verify-group-version.yml`，通过 `workflow-templates/call-*` 模板接入。
+成员通过 `linuxdeepin/.github` 的 `verify-group-version.yml` 校验 `debian/changelog` 版本，
+调用入口为 `workflow-templates/call-verify-group-version.yml`。模板同步配置覆盖全部 36 个成员；
+成员默认分支接入入口、启用分支保护后才会阻止合并。
+
+不改 changelog 版本的普通 PR 可以通过。改版 PR 的目标版本、来源仓库、自动化分支、目标分支和
+创建时间须匹配本仓库的原始发布记录；首次统一允许成员起始版本不同。未发起组发布的改版 PR 会失败，
+本轮发布 `6.0.50` 时单独改成 `6.0.51` 也会失败。关闭基线 PR 不取消原发布，原目标的成员 PR 可继续完成。
+
+成员检查名为 **`group-version-guard`**，来源为 GitHub Actions，不需要新增 App Secret。
+给各成员发布目标分支启用此必需检查，并要求通过 PR 合入、保持分支最新、禁止直接推送或绕过。
+这也适用于显式选择的 `base_branch`。现有模板同步采用直接推送，启用保护后后续模板更新须通过 PR 合入。
+
+部署前先完成上述首用准备及本仓库发布协调器的上线，再在共享仓库合入校验工作流和模板配置，
+待成员入口接入并验证检查后启用保护。测试 fork 会自动读取同组织的 `dde` 发布记录。
+go-lib 的发布入口、dde-clipboard 的包名及 epoch 迁移须先合入各自默认分支，以免首用迁移被新检查拦截。
 
 ## 分组
 
