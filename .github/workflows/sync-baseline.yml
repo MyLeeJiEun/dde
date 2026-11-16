@@ -11,7 +11,7 @@ on:
         type: choice
         options: [G1, G2]
   pull_request_target:
-    types: [opened, reopened, synchronize, edited, ready_for_review, closed]
+    types: [opened, reopened, synchronize, edited, ready_for_review, labeled, closed]
   workflow_call:
     inputs:
       group:
@@ -58,6 +58,10 @@ jobs:
   coordinate:
     name: Coordinate group release
     runs-on: ubuntu-latest
+    if: >
+      github.event_name != 'pull_request_target' ||
+      github.event.pull_request.head.repo.full_name == github.repository ||
+      contains(github.event.pull_request.labels.*.name, 'group-release')
     concurrency:
       # 定时、PR 和手动入口都可能更新同一个基线状态。
       group: baseline-controller
@@ -111,6 +115,7 @@ jobs:
 
           MARKER = "<!-- group-release\n"
           CONTEXT = "group-release-ready"
+          FAILURE_DESCRIPTION = "检查失败，详见 Actions 日志"
           MEMBER_LINKS_START = "<!-- group-release-members:start -->"
           MEMBER_LINKS_END = "<!-- group-release-members:end -->"
 
@@ -635,7 +640,7 @@ jobs:
                       try:
                           pr = pr or latest(repo, branch, base)
                           if pr:
-                              status(repo, pr["head"]["sha"], "failure", str(error))
+                              status(repo, pr["head"]["sha"], "failure", FAILURE_DESCRIPTION)
                       except Exception as status_error:
                           failures.append(f"{group}: 状态发布失败: {status_error}")
                       failures.append(f"{group}: {error}")
@@ -692,7 +697,7 @@ jobs:
                                           return
                               status(repo, pr["head"]["sha"], "success", "无基线版本变更")
                       except Exception as error:
-                          status(repo, pr["head"]["sha"], "failure", str(error))
+                          status(repo, pr["head"]["sha"], "failure", FAILURE_DESCRIPTION)
                           raise
                       return
                   if group and group not in cfg["groups"]:
